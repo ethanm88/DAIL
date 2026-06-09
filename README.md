@@ -24,11 +24,19 @@ bash install_dependencies.sh
 ```
 
 ### Download datasets
-First download the training datasets from huggingface in python shell.
+First download the training and evaluation datasets from huggingface in python shell.
 ```python
 from datasets import load_dataset
+
+# training datasets
 load_dataset("emendes3/e1-proof")
 load_dataset("emendes3/e1-verifiable")
+
+# evaluation datasets
+load_dataset("emendes3/aime_2024")
+load_dataset("emendes3/aime_2025")
+load_dataset("emendes3/beyond_aime")
+load_dataset("emendes3/imo_answer")
 ```
 
 ### Download model
@@ -115,26 +123,17 @@ From the repo root:
   export DATA_DIR=<path_to_data_dir>
   ```
 
-2. Download evaluation datasets from Hugging Face.
 
-  ```python
-  from datasets import load_dataset
-  load_dataset("emendes3/aime_2024")
-  load_dataset("emendes3/aime_2025")
-  load_dataset("emendes3/beyond_aime")
-  load_dataset("emendes3/imo_answer")
-  ```
-
-3. Preload the model before distributed inference:
+2. Preload the model before distributed inference:
 
   ```
   cd eval && \
   python preload_model.py --model_name Qwen/Qwen3-8B
   ```
 
-4. Adjust your cluster specific sbatch parameters in ``eval_array.sbatch``
+3. Adjust your cluster specific sbatch parameters in ``eval_array.sbatch``
 
-5. Submit inference jobs:
+4. Submit inference jobs:
 
   * For reasoning sweeps:
 
@@ -153,7 +152,7 @@ Outputs are written under `eval/raw_eval_results_answer/` in folders named:
 `dataset=<DATASET>_<MAX_TOKENS>_model=<MODEL>_enabling_thinking=<BOOL>_greedy=<BOOL>[_temperature=<T>][_no_force_answer]`,
 with one `problem_<id>.json` per problem. Slurm logs are by default saved to `eval/job-outputs/`.
 
-6. Compute metrics:
+5. Compute metrics:
 
 ```
 bash collate_reasoning.sh
