@@ -3,16 +3,18 @@ import re
 import sys
 import json
 import copy
-import argparse
+import hydra
 import asyncio
 import uuid
 import math
+import datasets
 import logging
 import contextlib
 from tqdm import tqdm
 from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict, Any, Iterable, Optional, Set
+from omegaconf import DictConfig
 
 import torch
 import numpy as np
@@ -141,9 +143,9 @@ def chunked(iterable, n):
         yield iterable[i:i + n]
 
 
-# core speculation decoding logic
+# core decoding logic
 
-async def setup_engines(args: argparse.Namespace):
+async def setup_engines(args: DictConfig):
     """Initializes the expert and student vLLM engines on specific GPUs."""
     global expert_engine, student_engine, tokenizer
 
@@ -206,7 +208,7 @@ async def clean_tokenized_think(token_ids, tokenizer):
 async def reverse_speculative_decode(
     expert_conversation: List[Dict[str, str]],
     student_conversation: List[Dict[str, str]],
-    args: argparse.Namespace,
+    args: DictConfig,
 ):
     """Generates a reasoning trace using the expert-proposes, student-validates method."""
     expert_context_ids = tokenizer.apply_chat_template(expert_conversation, tokenize=True, add_generation_prompt=False, continue_final_message=True)
@@ -300,60 +302,33 @@ async def reverse_speculative_decode(
 
     return tokenizer.decode(generated_token_ids), num_fails, num_total
 
-# --- Main Execution Logic ---
-
-async def main():
-    parser = argparse.ArgumentParser(description="Generate a reasoning dataset using Reverse Speculative Decoding in parallel.")
-    # parser.add_argument("--problem_file", type=str, default="../curated_human_reasoning_data/olympiad_problems_solutions.jsonl")
-    parser.add_argument("--problem_file_base", type=str, default="../generate_reasoning_traces_weak_model")
-    parser.add_argument("--eval_dir_base", type=str, default="expert_completions_speculation")
-    parser.add_argument("--segmented_reasoning_dir_base", type=str, default="segmented_reasoning")
-    parser.add_argument("--use_segments", action="store_true")
-    parser.add_argument("--problems", type=str, default=None, help='Indices of lines to process, e.g., "0,2,5-8"')
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-7B-Instruct") # NOTE: BE careful with model
-    parser.add_argument("--max_seq_len", type=int, default=16000)
-    # parser.add_argument("--max_tokens", type=int, default=16000)
-    parser.add_argument("--max_tokens", type=int, default=256)
-
-    parser.add_argument("--gpu_mem_util", type=float, default=0.90)
-    parser.add_argument("--expert_gpu_id", type=str, default="0")
-    parser.add_argument("--student_gpu_id", type=str, default="1")
-    parser.add_argument("--prob_threshold", type=float, default=0.0001)
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--top_p", type=float, default=0.95)
-    parser.add_argument("--top_k", type=int, default=-1)
-    parser.add_argument("--use_greedy", action="store_true")
-    parser.add_argument("--batch_size", type=int, default=64, help="Number of segments to process in parallel.")
-    parser.add_argument("--student_propose", action="store_true")
-    parser.add_argument("--answer_only", action="store_true")
-    parser.add_argument("--num_samples", type=int, default=1)
-    parser.add_argument("--reasoning", action="store_true", help="Force reasoning-mode dataset selection.")
-    parser.add_argument("--non_reasoning", action="store_true", help="Force non-reasoning dataset selection.")
-    args = parser.parse_args()
-
-
-    if args.reasoning and args.non_reasoning:
-        raise ValueError("Cannot set both --reasoning and --non_reasoning.")
+# extract logic
+async def run(cfg: DictConfig):
+    args = cfg
 
     model_name = args.model_name.replace('/', '_')
-    inferred_reasoning = 'Qwen3' in model_name or 'R1' in model_name or 'gpt-oss' in model_name or 'nvidia' in model_name
-    if args.reasoning:
-        is_reasoning = True
-    elif args.non_reasoning:
-        is_reasoning = False
-    else:
-        is_reasoning = inferred_reasoning
-    if is_reasoning:
-        problem_file = f"{args.problem_file_base}/Olympiad_solutions.jsonl"
-    else:
-        problem_file = f"{args.problem_file_base}/AIME_solutions_{model_name}.jsonl"
-    segmented_reasoning_dir = f"{args.segmented_reasoning_dir_base}_{model_name}"
+    dataset_name = args.dataset.replace('/', '_')
+    is_reasoning = bool(args.reasoning)
 
-    in_path = Path(problem_file)
+    if args.max_tokens is None:
+        args.max_tokens = (
+            args.max_tokens_reasoning if is_reasoning else args.max_tokens_non_reasoning
+        )
+
+    if args.prob_threshold is None:
+        args.prob_threshold = (
+            args.prob_threshold_reasoning if is_reasoning else args.prob_threshold_non_reasoning
+        )
+
+
+    # read in hf dataset from flag
+    # NOTE: this data must have problem_id, problem and solution fields
+    all_problems_data = datasets.load_dataset(args.dataset, split="train")
+
+    # create eval_dir
+    eval_dir = f"{args.eval_dir_base}_{dataset_name}_{model_name}_{args.prob_threshold}"
     if args.use_greedy:
-        eval_dir = f"{args.eval_dir_base}_{model_name}_{args.prob_threshold}_greedy"
-    else:
-        eval_dir = f"{args.eval_dir_base}_{model_name}_{args.prob_threshold}"
+        eval_dir += "_greedy"
     
     if args.answer_only:
         eval_dir += "_answer_only"
@@ -366,10 +341,8 @@ async def main():
     if is_reasoning:
         eval_dir += f"_max_tokens={args.max_tokens}"
     eval_dir = Path(eval_dir)
-    print(eval_dir)
     eval_dir.mkdir(exist_ok=True)
     
-    all_problems_data = load_jsonl(in_path)
     selected_indices = parse_index_spec(args.problems, len(all_problems_data))
 
     # collect tasks
@@ -379,6 +352,7 @@ async def main():
     setup = False
 
     for line_idx in selected_indices:
+        # grab problem data from hf dataset
         problem_data = all_problems_data[line_idx]
         pid = problem_data.get('problem_id', line_idx)
         
@@ -391,19 +365,10 @@ async def main():
             setup = True
             await setup_engines(args)
 
-        if args.use_segments:
-            segmented_reasoning_file = Path(segmented_reasoning_dir) / f"{pid}.json"
-            if not segmented_reasoning_file.exists(): continue
-            
-            with segmented_reasoning_file.open("r", encoding="utf-8") as f:
-                entry = json.load(f)
-                problem, solution, segments = entry.get("problem"), entry.get("solution"), entry.get("segments", [])
-        else:
-            problem, solution = problem_data.get('problem'), problem_data.get('solution')
-            if is_reasoning:
-                segments = ['<think>'] # do not use segments
-            else:
-                segments = ['']
+        problem, solution = problem_data.get('problem'), problem_data.get('solution')
+        start = ''
+        if is_reasoning:
+            start = '<think>'
 
         expert_prompt_template = EXPERT_PROMPT_TEMPLATE
         student_prompt_template = STUDENT_PROMPT_TEMPLATE
@@ -415,16 +380,15 @@ async def main():
         else:
             expert_prompt_text = build_expert_prompt(problem, solution, answer_only=args.answer_only, tokenizer=tokenizer, max_len=args.max_seq_len, expert_prompt_template=expert_prompt_template)
             student_prompt_text = build_student_prompt(problem, student_prompt_template=student_prompt_template)
-        for segment in segments:
-            expert_conversation = [{"role": "user", "content": expert_prompt_text}, {"role": "assistant", "content": segment}]
-            student_conversation = [{"role": "user", "content": student_prompt_text}, {"role": "assistant", "content": segment}]
-            
-            # Create the coroutine for the task but don't run it yet
-            for sample_id in range(args.num_samples):
-                task = reverse_speculative_decode(expert_conversation, student_conversation, args)
-                all_tasks.append(task)
-                # Store metadata to map results back later
-                all_metadata.append({"pid": pid, "problem": problem, "solution": solution, "segment": segment, "sample_id": sample_id})
+        expert_conversation = [{"role": "user", "content": expert_prompt_text}, {"role": "assistant", "content": start}]
+        student_conversation = [{"role": "user", "content": student_prompt_text}, {"role": "assistant", "content": start}]
+        
+        # Create the coroutine for the task but don't run it yet
+        for sample_id in range(args.num_samples):
+            task = reverse_speculative_decode(expert_conversation, student_conversation, args)
+            all_tasks.append(task)
+            # Store metadata to map results back later
+            all_metadata.append({"pid": pid, "problem": problem, "solution": solution, "sample_id": sample_id})
 
     print(f"Collected {len(all_tasks)} tasks. Running in batches of {args.batch_size}...")
     rows = defaultdict(lambda: {"problem_id": None, "problem": None, "solution": None, "num_fails": 0, "num_total": 0, "failure_rate": 0, "data": []})
@@ -454,7 +418,6 @@ async def main():
             rows[pid]["num_total"] += total
 
             rows[pid]["data"].append({
-                "segment": meta["segment"],
                 "raw_expert_reasoning": [generated_text],
                 "sample_id": meta["sample_id"]
             })
@@ -470,5 +433,9 @@ async def main():
 
     print(f"\nFinished. Wrote {len(rows)} files to: {eval_dir}")
 
+@hydra.main(version_base=None, config_path="conf", config_name="generate")
+def main(cfg: DictConfig):
+    asyncio.run(run(cfg))
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

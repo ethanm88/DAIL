@@ -1,0 +1,21 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
+
+model_name: Qwen/Qwen3-8B
+dataset: emendes3/e1-proof
+max_seq_len: null
+max_tokens: null
+num_samples: 32
+num_epochs: null
+kl_direction: reverse
+type_model: dail
+cheating_penalty: 0.1
+ratio: null
+ratio_reasoning: 1.0
+ratio_non_reasoning: 0.8
+base_path: ../data_generation/training_data
+reasoning: false

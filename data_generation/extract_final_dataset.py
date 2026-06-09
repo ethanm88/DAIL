@@ -2,9 +2,10 @@ import os
 import re
 import json
 import random
-import argparse
+import hydra
 from tqdm import tqdm
 from collections import defaultdict
+from omegaconf import DictConfig
 
 from grade_and_save import grade_and_copy
 
@@ -21,10 +22,6 @@ def extract_boxed_answer(text):
     else:
         # Return None if no boxed answer is found
         return None
-
-def infer_reasoning(model_name: str) -> bool:
-    lowered = model_name.lower()
-    return "qwen3" in lowered or "r1" in lowered or "gpt-oss" in lowered or "nvidia" in lowered
 
 def save_training_file_non_reasoning(file_path, save_dir="training_data"):
     # Configuration
@@ -75,16 +72,17 @@ def save_training_file_non_reasoning(file_path, save_dir="training_data"):
 
     # Prepare data for saving
     os.makedirs(save_dir, exist_ok=True)
-    training_data_dir = os.path.join(save_dir, f"{os.path.basename(file_path)}")
+    base_name = re.sub(r"_num_samples=\d+", "", os.path.basename(file_path))
+    training_data_dir = os.path.join(save_dir, base_name)
     os.makedirs(training_data_dir, exist_ok=True)
 
-    all_segments = []
-    print("Collating and shuffling segments...")
-    for problem_id, segments in tqdm(collated_data.items()):
-        random.shuffle(segments) # Shuffle segments within each problem
-        all_segments.extend(segments)
-    # Shuffle all segments from all problems together
-    random.shuffle(all_segments)
+    all_variants = []
+    print("Collating and shuffling variants...")
+    for problem_id, variants in tqdm(collated_data.items()):
+        random.shuffle(variants) # Shuffle variants within each problem
+        all_variants.extend(variants)
+    # Shuffle all variants from all problems together
+    random.shuffle(all_variants)
 
     # Save to a single file
     training_data_file = os.path.join(training_data_dir, "train.jsonl")
@@ -92,7 +90,7 @@ def save_training_file_non_reasoning(file_path, save_dir="training_data"):
     
     print(f"Saving data to {training_data_file}...")
     with open(training_data_file, "w", encoding="utf-8") as f:
-        for entry in all_segments:
+        for entry in all_variants:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             num_saved_entries += 1
 
@@ -126,7 +124,7 @@ def save_training_file_reasoning(file_path, save_dir="training_data"):
                             "problem": problem,
                             "solution": solution,
                             "segment_idx": idx,
-                            "segment": '', # use empty segment
+                            "segment": '', # keep empty field; entries are multiple solution variants
                             "expert_response": expert_response,
                         }
                     )
@@ -135,17 +133,19 @@ def save_training_file_reasoning(file_path, save_dir="training_data"):
 
     # Prepare data for saving
     os.makedirs(save_dir, exist_ok=True)
-    training_data_dir = os.path.join(save_dir, f"{os.path.basename(file_path)}")
+    base_name = re.sub(r"_num_samples=\d+", "", os.path.basename(file_path))
+    training_data_dir = os.path.join(save_dir, base_name)
     os.makedirs(training_data_dir, exist_ok=True)
 
-    all_segments = []
-    print("Collating and shuffling segments...")
-    for problem_id, segments in tqdm(collated_data.items()):
-        random.shuffle(segments) # Shuffle segments within each problem
-        all_segments.extend(segments)
+    all_variants = []
+    print("Collating and shuffling variants...")
+    for problem_id, variants in tqdm(collated_data.items()):
+        random.shuffle(variants)  # Shuffle variants within each problem
+        if variants:
+            all_variants.append(random.choice(variants))
 
-    # Shuffle all segments from all problems together
-    random.shuffle(all_segments)
+    # Shuffle all variants from all problems together
+    random.shuffle(all_variants)
 
     # Save to a single file
     training_data_file = os.path.join(training_data_dir, "train.jsonl")
@@ -153,7 +153,7 @@ def save_training_file_reasoning(file_path, save_dir="training_data"):
     
     print(f"Saving data to {training_data_file}...")
     with open(training_data_file, "w", encoding="utf-8") as f:
-        for entry in all_segments:
+        for entry in all_variants:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             num_saved_entries += 1
 
@@ -161,6 +161,7 @@ def save_training_file_reasoning(file_path, save_dir="training_data"):
 
 def get_raw_data_dir(
     base_dir=".",
+    dataset="emendes3/e1-proof",
     model_name="Qwen/Qwen2.5-7B-Instruct",
     ratio=0.8,
     student_propose=False,
@@ -169,7 +170,8 @@ def get_raw_data_dir(
     max_tokens=2048,
     reasoning=False,
 ):
-    base_file_name = f"{base_dir}/expert_completions_speculation_{model_name.replace('/', '_')}_{ratio}"
+    dataset_name = dataset.replace("/", "_")
+    base_file_name = f"{base_dir}/expert_completions_{dataset_name}_{model_name.replace('/', '_')}_{ratio}"
     if answer_only:
         base_file_name += "_answer_only"
     if student_propose:
@@ -180,39 +182,30 @@ def get_raw_data_dir(
         base_file_name += f"_max_tokens={max_tokens}"
     return base_file_name
 
-if __name__ == "__main__":
-       
-    parser = argparse.ArgumentParser(description="Process and save training files.")
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-7B-Instruct", help="Model name to process.")
-    parser.add_argument("--ratio", type=float, default=1.0, help="Ratio for data selection.")
-    parser.add_argument("--student_propose", action='store_true', help="Whether to use student propose data.")
-    parser.add_argument("--answer_only", action='store_true', help="Whether to use answer only data.")
-    parser.add_argument("--num_samples", type=int, default=32, help="Number of samples.")
-    parser.add_argument("--max_tokens", type=int, default=None, help="Max tokens (defaults: 256 for reasoning, 2048 for non-reasoning).")
-    parser.add_argument("--reasoning", action="store_true", help="Force reasoning-mode extraction.")
-    parser.add_argument("--non_reasoning", action="store_true", help="Force non-reasoning extraction.")
-    args = parser.parse_args()
-    
-    if args.reasoning and args.non_reasoning:
-        raise ValueError("Cannot set both --reasoning and --non_reasoning.")
+@hydra.main(version_base=None, config_path="conf", config_name="extract")
+def main(cfg: DictConfig):
+    # Validate dataset argument for consistency
+    allowed_datasets = {"emendes3/e1-proof", "emendes3/e1-verifiable"}
+    if cfg.dataset not in allowed_datasets:
+        raise ValueError(
+            f"Invalid dataset '{cfg.dataset}'. Allowed datasets: {', '.join(sorted(allowed_datasets))}"
+        )
 
-    is_reasoning = args.reasoning
-    if args.non_reasoning:
-        is_reasoning = False
-    elif not args.reasoning:
-        is_reasoning = infer_reasoning(args.model_name)
+    is_reasoning = bool(cfg.reasoning)
 
-    if args.max_tokens is None:
-        args.max_tokens = 256 if is_reasoning else 2048
+    max_tokens = cfg.max_tokens
+    if max_tokens is None:
+        max_tokens = 256 if is_reasoning else 2048
 
     raw_data_dir = get_raw_data_dir(
         base_dir=".",
-        model_name=args.model_name,
-        ratio=args.ratio,
-        student_propose=args.student_propose,
-        num_samples=args.num_samples,
-        answer_only=args.answer_only,
-        max_tokens=args.max_tokens,
+        dataset=cfg.dataset,
+        model_name=cfg.model_name,
+        ratio=cfg.ratio,
+        student_propose=cfg.student_propose,
+        num_samples=cfg.num_samples,
+        answer_only=cfg.answer_only,
+        max_tokens=max_tokens,
         reasoning=is_reasoning,
     )
 
@@ -228,3 +221,6 @@ if __name__ == "__main__":
         save_training_file_reasoning(processed_dir)
     else:
         save_training_file_non_reasoning(processed_dir)
+
+if __name__ == "__main__":
+    main()

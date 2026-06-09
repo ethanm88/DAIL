@@ -1,0 +1,7 @@
+defaults:
+  - common
+
+base_dir: .
+output_dir: correct_only_sampled
+dirs: []
+input_dir: null

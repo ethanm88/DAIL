@@ -205,3 +205,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Generated Data
+data_generation/expert_completions_*/
+correct_only_sampled/
+
+# All job-outputs dirs
+job-outputs/
+training_data/
+results/
+raw_eval_results/
+
+# Installation wheels
+flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl.1
+flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+
+# Trained models and logs
+train/dail
+wandb/

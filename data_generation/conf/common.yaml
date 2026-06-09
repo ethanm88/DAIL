@@ -1,0 +1,15 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
+
+model_name: Qwen/Qwen2.5-7B-Instruct
+ratio: 1.0
+dataset: emendes3/e1-proof
+student_propose: true
+answer_only: false
+num_samples: 32
+max_tokens: null
+reasoning: false

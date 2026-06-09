@@ -1,0 +1,21 @@
+defaults:
+  - common
+
+problem_file_base: ../generate_reasoning_traces_weak_model
+eval_dir_base: expert_completions
+problems: null
+
+max_seq_len: 16000
+gpu_mem_util: 0.90
+expert_gpu_id: "0"
+student_gpu_id: "1"
+max_tokens_reasoning: 256
+max_tokens_non_reasoning: 2048
+prob_threshold: null
+prob_threshold_reasoning: 1.0
+prob_threshold_non_reasoning: 0.8
+temperature: 0.6
+top_p: 0.95
+top_k: -1
+use_greedy: false
+batch_size: 64

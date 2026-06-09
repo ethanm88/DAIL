@@ -2,8 +2,9 @@ import os
 import json
 import re
 import shutil
-import argparse
+import hydra
 from typing import Dict, List, Optional
+from omegaconf import DictConfig
 
 BASE_DIR = "."
 DEFAULT_OUTPUT_DIR = "correct_only_sampled"
@@ -157,21 +158,14 @@ def grade_and_copy(
 
     return results
 
-def main():
-    parser = argparse.ArgumentParser(description="Grade and copy expert completions.")
-    parser.add_argument("--base_dir", type=str, default=BASE_DIR, help="Directory to scan for expert completion folders.")
-    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR, help="Directory to save copied files.")
-    parser.add_argument("--dirs", nargs="+", default=None, help="Specific subdirectories to process.")
-    parser.add_argument("--input_dir", type=str, default=None, help="Process a single directory.")
-    parser.add_argument("--reasoning", action="store_true", help="Skip grading and copy all files.")
-    args = parser.parse_args()
-
+@hydra.main(version_base=None, config_path="conf", config_name="grade")
+def main(cfg: DictConfig):
     grade_and_copy(
-        base_dir=args.base_dir,
-        output_dir=args.output_dir,
-        specified_dirs=args.dirs,
-        reasoning=args.reasoning,
-        input_dir=args.input_dir,
+        base_dir=cfg.base_dir,
+        output_dir=cfg.output_dir,
+        specified_dirs=cfg.dirs,
+        reasoning=cfg.reasoning,
+        input_dir=cfg.input_dir,
     )
 
 if __name__ == "__main__":

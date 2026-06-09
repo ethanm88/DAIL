@@ -1,0 +1,8 @@
+models:
+  - id: "model=.._train_dail_dail_ratio=1.0_kl_direction=reverse_Qwen_Qwen3-8B_max_tokens=256_num_epochs=3_model_enabling_thinking=True_greedy=False"
+    label: "DAIL (Qwen3-8B)"
+    enabled: true
+
+  - id: "model=Qwen_Qwen3-8B_enabling_thinking=True_greedy=False"
+    label: "Qwen3-8B"
+    enabled: true
